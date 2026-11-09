@@ -2,7 +2,8 @@ import { Label } from "@/components/ui/label";
 
 import { useState } from 'react';
 import FreelancerLayout from '../components/dashboard/FreelancerLayout';
-import { Search, RotateCw, LayoutGrid, Code2, Sparkles, Palette, Megaphone, BookOpen, Headphones, SlidersHorizontal, TrendingUp, DollarSign, CheckCircle, Building2, MapPin, Bookmark, ChevronDown, ChevronRight, Send, X } from 'lucide-react';
+import { useJobs, JobItem } from '../hooks/useJobs';
+import { Search, RotateCw, LayoutGrid, Code2, Sparkles, Palette, Megaphone, BookOpen, Headphones, SlidersHorizontal, TrendingUp, DollarSign, CheckCircle, Building2, MapPin, Bookmark, ChevronDown, ChevronRight, Send, X, Database } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
@@ -150,8 +151,11 @@ export default function FindWorkPage() {
   const [paymentVerifiedOnly, setPaymentVerifiedOnly] = useState(true);
   const [contractFilter, setContractFilter] = useState<string>('All');
   const [experienceFilter, setExperienceFilter] = useState<string>('All');
-  const [jobs, setJobs] = useState<JobItem[]>(INITIAL_JOBS);
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Supabase backend connection hook
+  const { jobs: dbJobs, loading: dbLoading, fetchJobs, toggleBookmark, submitProposal } = useJobs();
+  const jobs = dbJobs.length > 0 ? dbJobs : INITIAL_JOBS;
 
   // Apply dialog state
   const [selectedJobForApply, setSelectedJobForApply] = useState<JobItem | null>(null);
@@ -159,27 +163,20 @@ export default function FindWorkPage() {
   const [coverLetter, setCoverLetter] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleRefresh = () => {
+  const handleRefresh = async () => {
     setIsRefreshing(true);
-    setTimeout(() => {
-      setIsRefreshing(false);
-      toast.success('Job feed updated with latest postings');
-    }, 500);
+    await fetchJobs();
+    setIsRefreshing(false);
+    toast.success('Live database feed refreshed');
   };
 
-  const handleToggleBookmark = (jobId: string, title: string) => {
-    setJobs(prev => prev.map(job => {
-      if (job.id === jobId) {
-        const nextState = !job.bookmarked;
-        if (nextState) {
-          toast.success('Job saved to your bookmarks');
-        } else {
-          toast.info('Job removed from bookmarks');
-        }
-        return { ...job, bookmarked: nextState };
-      }
-      return job;
-    }));
+  const handleToggleBookmark = async (jobId: string, _title: string, currentBookmarked: boolean = false) => {
+    await toggleBookmark(jobId, currentBookmarked);
+    if (!currentBookmarked) {
+      toast.success('Job saved to database bookmarks');
+    } else {
+      toast.info('Job removed from bookmarks');
+    }
   };
 
   const handleOpenApply = (job: JobItem) => {
@@ -188,20 +185,27 @@ export default function FindWorkPage() {
     setCoverLetter('');
   };
 
-  const handleSubmitProposal = (e: React.FormEvent) => {
+  const handleSubmitProposal = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!coverLetter?.trim()) {
       toast.error('Please write a short cover letter to introduce yourself');
       return;
     }
-    setIsSubmitting(true);
-    setTimeout(() => {
-      setIsSubmitting(false);
-      setSelectedJobForApply(null);
-      toast.success('Proposal submitted successfully!', {
-        description: `Your proposal for "${selectedJobForApply?.title.slice(0, 40)}..." has been sent to the client.`
+    if (!selectedJobForApply) return;
+
+    try {
+      setIsSubmitting(true);
+      await submitProposal(selectedJobForApply.id, proposalRate, coverLetter);
+      toast.success('Proposal saved to database!', {
+        description: `Your proposal for "${selectedJobForApply.title.slice(0, 40)}..." was stored successfully.`
       });
-    }, 700);
+      setSelectedJobForApply(null);
+    } catch (err: any) {
+      console.error('Proposal error:', err);
+      toast.error(err.message || 'Failed to submit proposal to backend');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   // Filter jobs
@@ -239,9 +243,9 @@ export default function FindWorkPage() {
                 <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
                   Find work
                 </h1>
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-white/20 text-white backdrop-blur-md">
-                  <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-                  Live feed
+<span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-white/20 text-white backdrop-blur-md">
+                  <Database className="w-3 h-3 text-white" />
+                  Live database feed
                 </span>
               </div>
               <p className="text-xs sm:text-sm text-white/90">
@@ -448,8 +452,8 @@ export default function FindWorkPage() {
                     </div>
 
                     <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => handleToggleBookmark(job.id, job.title)}
+<button
+                        onClick={() => handleToggleBookmark(job.id, job.title, !!job.bookmarked)}
                         className={`w-9 h-9 rounded-xl border flex items-center justify-center transition-colors ${
                           job.bookmarked
                             ? 'border-[#00c26f] bg-[#00c26f]/10 text-[#00c26f]'
